@@ -27,7 +27,15 @@ public class AuditLogRepository {
 
     public void save(AuditLog log) {
         String sql = "INSERT INTO audit_logs (actor_email, action, entity_type, entity_id, details) VALUES (?, ?, ?, ?, ?)";
-        jdbcTemplate.update(sql, log.getActorEmail(), log.getAction(), log.getEntityType(), log.getEntityId(), log.getDetails());
+        try {
+            jdbcTemplate.update(sql, log.getActorEmail(), log.getAction(), log.getEntityType(), log.getEntityId(), log.getDetails());
+        } catch (Exception e) {
+            try {
+                jdbcTemplate.execute("SELECT setval(COALESCE(pg_get_serial_sequence('audit_logs', 'log_id'), 'audit_logs_log_id_seq'), " +
+                        "COALESCE((SELECT MAX(log_id) FROM audit_logs), 1), (SELECT COUNT(*) > 0 FROM audit_logs))");
+                jdbcTemplate.update(sql, log.getActorEmail(), log.getAction(), log.getEntityType(), log.getEntityId(), log.getDetails());
+            } catch (Exception ignored) {}
+        }
     }
 
     public List<AuditLog> findRecent(int limit) {
@@ -35,4 +43,3 @@ public class AuditLogRepository {
         return jdbcTemplate.query(sql, auditLogRowMapper, limit);
     }
 }
-

@@ -2,6 +2,8 @@ package com.trix.workshop.repository;
 
 import com.trix.workshop.dto.AttendanceSummaryDto;
 import com.trix.workshop.entity.Attendance;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -14,6 +16,7 @@ import java.util.Optional;
 
 @Repository
 public class AttendanceRepository {
+    private static final Logger log = LoggerFactory.getLogger(AttendanceRepository.class);
     private final JdbcTemplate jdbcTemplate;
 
     public AttendanceRepository(JdbcTemplate jdbcTemplate) {
@@ -37,15 +40,35 @@ public class AttendanceRepository {
     };
 
     public void saveOrUpdate(Long registrationId, Long workshopId, Long participantId, String status, String recordedBy) {
-        Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM attendance WHERE registration_id = ?", Integer.class, registrationId);
+        if (registrationId == null) {
+            log.warn("saveOrUpdate skipped: registrationId is null");
+            return;
+        }
+
+        Integer count = 0;
+        try {
+            count = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM attendance WHERE registration_id = ?", Integer.class, registrationId);
+        } catch (Exception ignored) {}
+
         Timestamp now = Timestamp.valueOf(LocalDateTime.now());
         if (count != null && count > 0) {
             String updateSql = "UPDATE attendance SET attendance_status = ?, recorded_at = ?, recorded_by = ? WHERE registration_id = ?";
             jdbcTemplate.update(updateSql, status, now, recordedBy, registrationId);
         } else {
             String insertSql = "INSERT INTO attendance (registration_id, workshop_id, participant_id, attendance_status, recorded_at, recorded_by) VALUES (?, ?, ?, ?, ?, ?)";
-            jdbcTemplate.update(insertSql, registrationId, workshopId, participantId, status, now, recordedBy);
+            try {
+                jdbcTemplate.update(insertSql, registrationId, workshopId, participantId, status, now, recordedBy);
+            } catch (Exception e) {
+                // If sequence collision on PostgreSQL:
+                try {
+                    jdbcTemplate.execute("SELECT setval(COALESCE(pg_get_serial_sequence('attendance', 'attendance_id'), 'attendance_attendance_id_seq'), " +
+                            "COALESCE((SELECT MAX(attendance_id) FROM attendance), 1), (SELECT COUNT(*) > 0 FROM attendance))");
+                    jdbcTemplate.update(insertSql, registrationId, workshopId, participantId, status, now, recordedBy);
+                } catch (Exception ignored) {
+                    log.warn("Attendance record init warning: {}", e.getMessage());
+                }
+            }
         }
     }
 
@@ -119,4 +142,3 @@ public class AttendanceRepository {
         return count != null ? count : 0;
     }
 }
-

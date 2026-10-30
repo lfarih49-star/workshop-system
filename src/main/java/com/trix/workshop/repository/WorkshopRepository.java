@@ -1,6 +1,8 @@
 package com.trix.workshop.repository;
 
 import com.trix.workshop.entity.Workshop;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -15,6 +17,7 @@ import java.util.Optional;
 
 @Repository
 public class WorkshopRepository {
+    private static final Logger log = LoggerFactory.getLogger(WorkshopRepository.class);
     private final JdbcTemplate jdbcTemplate;
 
     public WorkshopRepository(JdbcTemplate jdbcTemplate) {
@@ -45,8 +48,46 @@ public class WorkshopRepository {
                      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         KeyHolder keyHolder = new GeneratedKeyHolder();
 
+        try {
+            executeInsert(sql, w, keyHolder);
+        } catch (Exception ex) {
+            String msg = ex.getMessage() != null ? ex.getMessage().toLowerCase() : "";
+            if (msg.contains("workshops_pkey") || msg.contains("duplicate key")) {
+                log.warn("Workshop sequence collision. Resyncing workshops sequence...");
+                try {
+                    jdbcTemplate.execute("SELECT setval(COALESCE(pg_get_serial_sequence('workshops', 'workshop_id'), 'workshops_workshop_id_seq'), " +
+                            "COALESCE((SELECT MAX(workshop_id) FROM workshops), 1), (SELECT COUNT(*) > 0 FROM workshops))");
+                    executeInsert(sql, w, keyHolder);
+                } catch (Exception retryEx) {
+                    throw ex;
+                }
+            } else {
+                throw ex;
+            }
+        }
+
+        Number key = extractKey(keyHolder, "workshop_id");
+        if (key != null) {
+            w.setWorkshopId(key.longValue());
+        } else {
+            try {
+                Long id = jdbcTemplate.queryForObject(
+                        "SELECT workshop_id FROM workshops WHERE title = ? ORDER BY workshop_id DESC LIMIT 1",
+                        Long.class, w.getTitle());
+                w.setWorkshopId(id);
+            } catch (Exception ignored) {}
+        }
+        return w;
+    }
+
+    private void executeInsert(String sql, Workshop w, KeyHolder keyHolder) {
         jdbcTemplate.update(connection -> {
-            PreparedStatement ps = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
+            PreparedStatement ps;
+            try {
+                ps = connection.prepareStatement(sql, new String[]{"workshop_id"});
+            } catch (Exception e) {
+                ps = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
+            }
             ps.setString(1, w.getTitle());
             ps.setString(2, w.getDescription());
             ps.setString(3, w.getCategory());
@@ -65,19 +106,6 @@ public class WorkshopRepository {
             ps.setString(12, w.getStatus() != null ? w.getStatus() : "UPCOMING");
             return ps;
         }, keyHolder);
-
-        Number key = extractKey(keyHolder, "workshop_id");
-        if (key != null) {
-            w.setWorkshopId(key.longValue());
-        } else {
-            try {
-                Long id = jdbcTemplate.queryForObject(
-                        "SELECT workshop_id FROM workshops WHERE title = ? ORDER BY workshop_id DESC LIMIT 1",
-                        Long.class, w.getTitle());
-                w.setWorkshopId(id);
-            } catch (Exception ignored) {}
-        }
-        return w;
     }
 
     private Number extractKey(KeyHolder keyHolder, String column) {
@@ -185,4 +213,3 @@ public class WorkshopRepository {
         return jdbcTemplate.query(sql, workshopRowMapper, limit);
     }
 }
-

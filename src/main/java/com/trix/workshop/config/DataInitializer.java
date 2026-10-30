@@ -29,6 +29,7 @@ public class DataInitializer implements CommandLineRunner {
     private final PasswordEncoder passwordEncoder;
     private final PdfCertificateGenerator pdfGenerator;
     private final JdbcTemplate jdbcTemplate;
+    private final DatabaseAutoMigrator databaseAutoMigrator;
 
     public DataInitializer(UserRepository userRepository,
                            WorkshopRepository workshopRepository,
@@ -37,7 +38,8 @@ public class DataInitializer implements CommandLineRunner {
                            CertificateRepository certificateRepository,
                            PasswordEncoder passwordEncoder,
                            PdfCertificateGenerator pdfGenerator,
-                           JdbcTemplate jdbcTemplate) {
+                           JdbcTemplate jdbcTemplate,
+                           DatabaseAutoMigrator databaseAutoMigrator) {
         this.userRepository = userRepository;
         this.workshopRepository = workshopRepository;
         this.registrationRepository = registrationRepository;
@@ -46,6 +48,7 @@ public class DataInitializer implements CommandLineRunner {
         this.passwordEncoder = passwordEncoder;
         this.pdfGenerator = pdfGenerator;
         this.jdbcTemplate = jdbcTemplate;
+        this.databaseAutoMigrator = databaseAutoMigrator;
     }
 
     @Override
@@ -54,6 +57,7 @@ public class DataInitializer implements CommandLineRunner {
             log.info("Checking initial demo accounts and workshop inputs...");
             ensureDemoUsers();
             ensureSampleWorkshopsAndActivity();
+            databaseAutoMigrator.syncPostgresSequences();
             log.info("Demo data check complete.");
         } catch (Exception e) {
             log.error("DataInitializer error: ", e);

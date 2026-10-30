@@ -97,3 +97,11 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     details TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 7. SYNCHRONIZE SERIAL SEQUENCES (Prevents duplicate key errors after manual inserts)
+SELECT setval(COALESCE(pg_get_serial_sequence('registrations', 'registration_id'), 'registrations_registration_id_seq'), COALESCE((SELECT MAX(registration_id) FROM registrations), 1), (SELECT COUNT(*) > 0 FROM registrations));
+SELECT setval(COALESCE(pg_get_serial_sequence('attendance', 'attendance_id'), 'attendance_attendance_id_seq'), COALESCE((SELECT MAX(attendance_id) FROM attendance), 1), (SELECT COUNT(*) > 0 FROM attendance));
+SELECT setval(COALESCE(pg_get_serial_sequence('certificates', 'certificate_id'), 'certificates_certificate_id_seq'), COALESCE((SELECT MAX(certificate_id) FROM certificates), 1), (SELECT COUNT(*) > 0 FROM certificates));
+SELECT setval(COALESCE(pg_get_serial_sequence('audit_logs', 'log_id'), 'audit_logs_log_id_seq'), COALESCE((SELECT MAX(log_id) FROM audit_logs), 1), (SELECT COUNT(*) > 0 FROM audit_logs));
+SELECT setval(COALESCE(pg_get_serial_sequence('workshops', 'workshop_id'), 'workshops_workshop_id_seq'), COALESCE((SELECT MAX(workshop_id) FROM workshops), 1), (SELECT COUNT(*) > 0 FROM workshops));
+SELECT setval(COALESCE(pg_get_serial_sequence('users', 'user_id'), 'users_user_id_seq'), COALESCE((SELECT MAX(user_id) FROM users), 1), (SELECT COUNT(*) > 0 FROM users));

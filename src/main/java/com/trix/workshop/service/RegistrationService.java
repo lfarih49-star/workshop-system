@@ -63,18 +63,57 @@ public class RegistrationService {
 
         Registration savedReg = registrationRepository.save(reg);
 
-        // Auto-initialize attendance placeholder as NOT_RECORDED
-        attendanceRepository.saveOrUpdate(savedReg.getRegistrationId(), workshopId, participant.getUserId(), "NOT_RECORDED", "SYSTEM_INIT");
+        Long regId = savedReg.getRegistrationId();
+        if (regId == null) {
+            regId = registrationRepository.findByParticipantAndWorkshop(participant.getUserId(), workshopId)
+                    .map(Registration::getRegistrationId)
+                    .orElse(null);
+            savedReg.setRegistrationId(regId);
+        }
 
-        auditService.log(participant.getEmail(), "REGISTER_WORKSHOP", "REGISTRATION", savedReg.getRegistrationId(),
+        final Long finalRegId = regId;
+
+        // Auto-initialize attendance placeholder as NOT_RECORDED
+        if (finalRegId != null) {
+            try {
+                attendanceRepository.saveOrUpdate(finalRegId, workshopId, participant.getUserId(), "NOT_RECORDED", "SYSTEM_INIT");
+            } catch (Exception ignored) {}
+        }
+
+        auditService.log(participant.getEmail(), "REGISTER_WORKSHOP", "REGISTRATION", finalRegId,
                 "Participant registered for workshop: " + workshop.getTitle());
 
-        Long regId = savedReg.getRegistrationId();
         List<RegistrationDto> dtoList = registrationRepository.findByParticipantId(participant.getUserId());
-        return dtoList.stream()
-                .filter(d -> d.getRegistrationId().equals(regId))
-                .findFirst()
-                .orElse(null);
+        RegistrationDto resultDto = null;
+        if (finalRegId != null && dtoList != null) {
+            resultDto = dtoList.stream()
+                    .filter(d -> finalRegId.equals(d.getRegistrationId()))
+                    .findFirst()
+                    .orElse(null);
+        }
+        if (resultDto == null && dtoList != null && !dtoList.isEmpty()) {
+            resultDto = dtoList.get(0);
+        }
+        if (resultDto == null) {
+            resultDto = new RegistrationDto();
+            resultDto.setRegistrationId(finalRegId);
+            resultDto.setParticipantId(participant.getUserId());
+            resultDto.setParticipantName(participant.getFullName());
+            resultDto.setParticipantEmail(participant.getEmail());
+            resultDto.setParticipantPhone(participant.getPhone());
+            resultDto.setParticipantDepartment(participant.getDepartment());
+            resultDto.setParticipantInstitution(participant.getInstitution());
+            resultDto.setWorkshopId(workshop.getWorkshopId());
+            resultDto.setWorkshopTitle(workshop.getTitle());
+            resultDto.setWorkshopCategory(workshop.getCategory());
+            resultDto.setWorkshopDate(workshop.getWorkshopDate() != null ? workshop.getWorkshopDate().toString() : "");
+            resultDto.setWorkshopVenue(workshop.getVenue());
+            resultDto.setRegistrationDate(java.time.LocalDateTime.now());
+            resultDto.setRegistrationStatus(savedReg.getRegistrationStatus() != null ? savedReg.getRegistrationStatus() : "APPROVED");
+            resultDto.setNotes(savedReg.getNotes());
+            resultDto.setAttendanceStatus("NOT_RECORDED");
+        }
+        return resultDto;
     }
 
     public List<RegistrationDto> getMyRegistrations(Long participantId) {

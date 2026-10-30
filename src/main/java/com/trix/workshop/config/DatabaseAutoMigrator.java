@@ -109,9 +109,65 @@ public class DatabaseAutoMigrator implements CommandLineRunner {
                 } catch (Exception e) {
                     log.warn("DatabaseAutoMigrator: Schema column migration note: {}", e.getMessage());
                 }
+
+                // Resynchronize all PostgreSQL sequences to avoid duplicate key errors after manual data imports
+                syncPostgresSequences();
             }
         } catch (Exception e) {
             log.error("DatabaseAutoMigrator error: ", e);
+        }
+    }
+
+    public void syncPostgresSequences() {
+        try (Connection con = dataSource.getConnection()) {
+            String dbProduct = con.getMetaData().getDatabaseProductName().toLowerCase();
+            if (!dbProduct.contains("postgres")) {
+                return;
+            }
+        } catch (Exception e) {
+            return;
+        }
+
+        String[][] tablesAndCols = {
+                {"registrations", "registration_id", "registrations_registration_id_seq"},
+                {"attendance", "attendance_id", "attendance_attendance_id_seq"},
+                {"certificates", "certificate_id", "certificates_certificate_id_seq"},
+                {"audit_logs", "log_id", "audit_logs_log_id_seq"},
+                {"workshops", "workshop_id", "workshops_workshop_id_seq"},
+                {"users", "user_id", "users_user_id_seq"}
+        };
+
+        for (String[] tc : tablesAndCols) {
+            String table = tc[0];
+            String col = tc[1];
+            String seq = tc[2];
+            try {
+                Long maxId = jdbcTemplate.queryForObject("SELECT COALESCE(MAX(" + col + "), 0) FROM " + table, Long.class);
+                if (maxId == null) maxId = 0L;
+
+                boolean hasRows = maxId > 0;
+                long setvalArg = hasRows ? maxId : 1L;
+
+                // Sync sequence: if has rows, set to maxId and is_called=true (nextval will be maxId+1)
+                // if empty, set to 1 and is_called=false (nextval will be 1)
+                try {
+                    String sql = "SELECT setval(COALESCE(pg_get_serial_sequence('" + table + "', '" + col + "'), '" + seq + "'), " +
+                                 setvalArg + ", " + hasRows + ")";
+                    jdbcTemplate.execute(sql);
+                    log.info("DatabaseAutoMigrator: Resynced sequence for {}.{} (max={}, nextval={})",
+                            table, col, maxId, (hasRows ? maxId + 1 : 1));
+                } catch (Exception e1) {
+                    try {
+                        String fallbackSql = "SELECT setval('" + seq + "', " + setvalArg + ", " + hasRows + ")";
+                        jdbcTemplate.execute(fallbackSql);
+                        log.info("DatabaseAutoMigrator: Fallback resynced sequence {} (max={})", seq, maxId);
+                    } catch (Exception e2) {
+                        log.warn("DatabaseAutoMigrator: Could not sync sequence for {}: {}", table, e2.getMessage());
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("DatabaseAutoMigrator: Error querying max ID for {}: {}", table, e.getMessage());
+            }
         }
     }
 }

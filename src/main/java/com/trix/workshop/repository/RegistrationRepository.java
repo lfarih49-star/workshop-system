@@ -2,6 +2,8 @@ package com.trix.workshop.repository;
 
 import com.trix.workshop.dto.RegistrationDto;
 import com.trix.workshop.entity.Registration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -16,6 +18,7 @@ import java.util.Optional;
 
 @Repository
 public class RegistrationRepository {
+    private static final Logger log = LoggerFactory.getLogger(RegistrationRepository.class);
     private final JdbcTemplate jdbcTemplate;
 
     public RegistrationRepository(JdbcTemplate jdbcTemplate) {
@@ -62,14 +65,24 @@ public class RegistrationRepository {
                      "VALUES (?, ?, ?, ?)";
         KeyHolder keyHolder = new GeneratedKeyHolder();
 
-        jdbcTemplate.update(connection -> {
-            PreparedStatement ps = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
-            ps.setLong(1, r.getParticipantId());
-            ps.setLong(2, r.getWorkshopId());
-            ps.setString(3, r.getRegistrationStatus() != null ? r.getRegistrationStatus() : "APPROVED");
-            ps.setString(4, r.getNotes());
-            return ps;
-        }, keyHolder);
+        try {
+            executeInsert(sql, r, keyHolder);
+        } catch (Exception ex) {
+            String msg = ex.getMessage() != null ? ex.getMessage().toLowerCase() : "";
+            // If PostgreSQL sequence desync caused duplicate primary key:
+            if (msg.contains("registrations_pkey") || msg.contains("duplicate key") || msg.contains("unique constraint")) {
+                log.warn("Sequence or constraint warning during registration: {}. Attempting sequence resync and retry...", ex.getMessage());
+                try {
+                    jdbcTemplate.execute("SELECT setval(COALESCE(pg_get_serial_sequence('registrations', 'registration_id'), 'registrations_registration_id_seq'), " +
+                            "COALESCE((SELECT MAX(registration_id) FROM registrations), 1), (SELECT COUNT(*) > 0 FROM registrations))");
+                    executeInsert(sql, r, keyHolder);
+                } catch (Exception retryEx) {
+                    throw ex; // If retry also fails (e.g. unique constraint on participant_id + workshop_id), throw original
+                }
+            } else {
+                throw ex;
+            }
+        }
 
         Number key = extractKey(keyHolder, "registration_id");
         if (key != null) {
@@ -83,6 +96,22 @@ public class RegistrationRepository {
             } catch (Exception ignored) {}
         }
         return r;
+    }
+
+    private void executeInsert(String sql, Registration r, KeyHolder keyHolder) {
+        jdbcTemplate.update(connection -> {
+            PreparedStatement ps;
+            try {
+                ps = connection.prepareStatement(sql, new String[]{"registration_id"});
+            } catch (Exception e) {
+                ps = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
+            }
+            ps.setLong(1, r.getParticipantId());
+            ps.setLong(2, r.getWorkshopId());
+            ps.setString(3, r.getRegistrationStatus() != null ? r.getRegistrationStatus() : "APPROVED");
+            ps.setString(4, r.getNotes());
+            return ps;
+        }, keyHolder);
     }
 
     private Number extractKey(KeyHolder keyHolder, String column) {
@@ -210,4 +239,3 @@ public class RegistrationRepository {
         return count != null ? count : 0;
     }
 }
-

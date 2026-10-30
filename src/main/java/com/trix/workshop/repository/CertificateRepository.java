@@ -3,6 +3,8 @@ package com.trix.workshop.repository;
 import com.trix.workshop.dto.CertificateDto;
 import com.trix.workshop.dto.CertificateEligibilityDto;
 import com.trix.workshop.entity.Certificate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -17,6 +19,7 @@ import java.util.Optional;
 
 @Repository
 public class CertificateRepository {
+    private static final Logger log = LoggerFactory.getLogger(CertificateRepository.class);
     private final JdbcTemplate jdbcTemplate;
 
     public CertificateRepository(JdbcTemplate jdbcTemplate) {
@@ -65,19 +68,23 @@ public class CertificateRepository {
                      "issue_date, file_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
         KeyHolder keyHolder = new GeneratedKeyHolder();
 
-        jdbcTemplate.update(connection -> {
-            PreparedStatement ps = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
-            ps.setLong(1, c.getRegistrationId());
-            ps.setLong(2, c.getParticipantId());
-            ps.setLong(3, c.getWorkshopId());
-            ps.setString(4, c.getCertificateNumber());
-            ps.setString(5, c.getVerificationCode());
-            ps.setString(6, c.getCertificateStatus() != null ? c.getCertificateStatus() : "GENERATED");
-            ps.setBoolean(7, c.getEligibilityVerified() != null ? c.getEligibilityVerified() : true);
-            ps.setDate(8, Date.valueOf(c.getIssueDate()));
-            ps.setString(9, c.getFilePath());
-            return ps;
-        }, keyHolder);
+        try {
+            executeInsert(sql, c, keyHolder);
+        } catch (Exception ex) {
+            String msg = ex.getMessage() != null ? ex.getMessage().toLowerCase() : "";
+            if (msg.contains("certificates_pkey") || msg.contains("duplicate key")) {
+                log.warn("Certificate sequence collision detected. Resyncing certificates sequence...");
+                try {
+                    jdbcTemplate.execute("SELECT setval(COALESCE(pg_get_serial_sequence('certificates', 'certificate_id'), 'certificates_certificate_id_seq'), " +
+                            "COALESCE((SELECT MAX(certificate_id) FROM certificates), 1), (SELECT COUNT(*) > 0 FROM certificates))");
+                    executeInsert(sql, c, keyHolder);
+                } catch (Exception retryEx) {
+                    throw ex;
+                }
+            } else {
+                throw ex;
+            }
+        }
 
         Number key = extractKey(keyHolder, "certificate_id");
         if (key != null) {
@@ -91,6 +98,27 @@ public class CertificateRepository {
             } catch (Exception ignored) {}
         }
         return c;
+    }
+
+    private void executeInsert(String sql, Certificate c, KeyHolder keyHolder) {
+        jdbcTemplate.update(connection -> {
+            PreparedStatement ps;
+            try {
+                ps = connection.prepareStatement(sql, new String[]{"certificate_id"});
+            } catch (Exception e) {
+                ps = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
+            }
+            ps.setLong(1, c.getRegistrationId());
+            ps.setLong(2, c.getParticipantId());
+            ps.setLong(3, c.getWorkshopId());
+            ps.setString(4, c.getCertificateNumber());
+            ps.setString(5, c.getVerificationCode());
+            ps.setString(6, c.getCertificateStatus() != null ? c.getCertificateStatus() : "GENERATED");
+            ps.setBoolean(7, c.getEligibilityVerified() != null ? c.getEligibilityVerified() : true);
+            ps.setDate(8, Date.valueOf(c.getIssueDate()));
+            ps.setString(9, c.getFilePath());
+            return ps;
+        }, keyHolder);
     }
 
     private Number extractKey(KeyHolder keyHolder, String column) {
@@ -285,4 +313,3 @@ public class CertificateRepository {
         return count != null ? count : 0;
     }
 }
-
